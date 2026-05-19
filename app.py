@@ -1,48 +1,86 @@
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import Dash, dcc, html, Input, Output, State, callback
 
-# ── COLOURS ──
-DARK_BG   = "#0d1117"
-CARD_BG   = "#161b22"
-BORDER    = "#30363d"
-ACCENT    = "#58a6ff"
-ACCENT2   = "#f78166"
-TEXT      = "#e6edf3"
-MUTED     = "#8b949e"
-GRID      = "#21262d"
-HIGHLIGHT = "#f0e68c"
-GREEN     = "#3fb950"
+PAGE_BG = "#f7f8fa"
+CARD_BG = "#ffffff"
+BORDER  = "#dde1e7"
+TEXT    = "#1c2230"
+MUTED   = "#5a6474"
+ACCENT  = "#0969da"   # blue  - receivers / selected
+SENDER  = "#e07b39"   # orange - senders
+UNSEL   = "#b8bfc9"   # grey  - dimmed items
+GRID    = "#edf0f3"
+CHORO   = "Blues"     # sequential scale for choropleth
 
-# ── DATA ──
-df = pd.read_parquet("table1.parquet", engine="fastparquet")
-df = pd.read_parquet("data_both_sexes.parquet", engine="fastparquet")
-df = df[
-    (df["destination_code"] < 900) &
-    (df["origin_code"]      < 900) &
-    (df["sex"] == "both_sexes")
+CB_PALETTE = [
+    "#0072B2", "#E69F00", "#56B4E9", "#D55E00",
+    "#CC79A7", "#F0E442", "#7B2D8B", "#009999",
+    "#3D5A80", "#CC8833", "#5B8DB8", "#8C69B2",
+    "#4A7FA5", "#B07D3A", "#A05C7A", "#E0A040",
+]
+
+df_all = pd.read_parquet("data_all_sexes.parquet", engine="fastparquet")
+df_all = df_all[
+    (df_all["destination_code"] < 900) &
+    (df_all["origin_code"]      < 900)
 ].copy()
-df["migrant_stock"] = pd.to_numeric(df["migrant_stock"], errors="coerce")
-df["year"] = df["year"].astype(int)
+df_all["destination"] = df_all["destination"].str.replace("*", "", regex=False)
+df_all["origin"]      = df_all["origin"].str.replace("*", "", regex=False)
+df_all["migrant_stock"] = pd.to_numeric(df_all["migrant_stock"], errors="coerce")
+df_all["year"]          = df_all["year"].astype(int)
+
+df = df_all[df_all["sex"] == "both_sexes"].copy()
 
 YEARS     = sorted(df["year"].unique())
 COUNTRIES = sorted(df["destination"].dropna().unique())
 
-# ── Unique colour per country ──
-QUAL_COLORS = (
-    px.colors.qualitative.Alphabet +
-    px.colors.qualitative.Light24 +
-    px.colors.qualitative.Dark24 +
-    px.colors.qualitative.Vivid +
-    px.colors.qualitative.Safe
+#precompute sums
+AGG_DEST = (
+    df.groupby(["destination", "year"], as_index=False)["migrant_stock"]
+    .sum().dropna()
 )
+AGG_ORIG = (
+    df.groupby(["origin", "year"], as_index=False)["migrant_stock"]
+    .sum().dropna()
+)
+FLOWS_INTO = (
+    df.groupby(["destination", "year", "origin"], as_index=False)["migrant_stock"]
+    .sum().dropna()
+)
+FLOWS_FROM = (
+    df.groupby(["origin", "year", "destination"], as_index=False)["migrant_stock"]
+    .sum().dropna()
+)
+GENDER_RECV = (
+    df_all[df_all["sex"].isin(["male", "female"])]
+    .dropna(subset=["migrant_stock"])
+    .groupby(["destination", "sex", "year"], as_index=False)["migrant_stock"].sum()
+)
+GENDER_SENT = (
+    df_all[df_all["sex"].isin(["male", "female"])]
+    .dropna(subset=["migrant_stock"])
+    .groupby(["origin", "sex", "year"], as_index=False)["migrant_stock"].sum()
+)
+
+GENDER_GLOBAL = (
+    GENDER_RECV.groupby(["sex", "year"], as_index=False)["migrant_stock"].sum()
+)
+GLOBAL_TREND = (
+    AGG_DEST.groupby("year", as_index=False)["migrant_stock"].sum()
+)
+
+MALE_COLOR   = "#0072B2"
+FEMALE_COLOR = "#CC79A7"
+
 COUNTRY_COLOR = {
-    c: QUAL_COLORS[i % len(QUAL_COLORS)]
+    c: CB_PALETTE[i % len(CB_PALETTE)]
     for i, c in enumerate(COUNTRIES)
 }
 
-# ── Country centroids ──
+#latitude,longitude
 CENTROIDS = {
     "Afghanistan": (33.9, 67.7), "Albania": (41.2, 20.2),
     "Algeria": (28.0, 1.7), "Angola": (11.2, 17.9),
@@ -83,12 +121,10 @@ CENTROIDS = {
     "South Africa": (-30.6, 22.9), "South Sudan": (7.9, 29.7),
     "Spain": (40.5, -3.7), "Sri Lanka": (7.9, 80.8),
     "Sudan": (12.9, 30.2), "Sweden": (60.1, 18.6),
-    "Switzerland": (46.8, 8.2),
-    "Syrian Arab Republic": (34.8, 38.9),
+    "Switzerland": (46.8, 8.2), "Syrian Arab Republic": (34.8, 38.9),
     "Thailand": (15.9, 101.0), "Tunisia": (33.9, 9.5),
-    "Türkiye": (38.9, 35.2), "Uganda": (1.4, 32.3),
-    "Ukraine": (48.4, 31.2),
-    "United Arab Emirates": (23.4, 53.8),
+    "Turkiye": (38.9, 35.2), "Uganda": (1.4, 32.3),
+    "Ukraine": (48.4, 31.2), "United Arab Emirates": (23.4, 53.8),
     "United Kingdom": (55.4, -3.4),
     "United States of America": (37.1, -95.7),
     "Uruguay": (-32.5, -55.8),
@@ -97,15 +133,18 @@ CENTROIDS = {
     "Zambia": (-13.1, 27.8), "Zimbabwe": (-19.0, 29.2),
 }
 
-DD_STYLE = dict(
-    backgroundColor=DARK_BG,
-    color=TEXT,
-    border=f"1px solid {BORDER}",
-    borderRadius="4px",
-    fontSize="10px",
-)
+#name label to fit inside the borders
+LARGE_COUNTRIES = {
+    "United States of America", "Canada", "Brazil", "Argentina",
+    "Russian Federation", "Australia", "China", "India",
+    "Saudi Arabia", "Mexico", "Iran (Islamic Republic of)",
+    "Kazakhstan", "Peru", "South Africa", "Ethiopia",
+    "Egypt", "Nigeria", "Algeria", "Sudan",
+    "Venezuela (Bolivarian Republic of)", "Colombia",
+    "Angola", "Mozambique", "Zambia",
+}
 
-def shorten(name):
+def shorten(name: str) -> str:
     return (name
         .replace("United States of America", "USA")
         .replace("United Kingdom", "UK")
@@ -113,551 +152,553 @@ def shorten(name):
         .replace("Syrian Arab Republic", "Syria")
         .replace("Venezuela (Bolivarian Republic of)", "Venezuela")
         .replace("Iran (Islamic Republic of)", "Iran")
-        .replace("China, Hong Kong SAR", "HK")
+        .replace("China, Hong Kong SAR", "Hong Kong")
         .replace("Viet Nam", "Vietnam")
+        .replace("Turkiye", "Turkey")
         .replace("Türkiye", "Turkey"))
 
-# ── Button styles ──
-def btn_style(active, color):
-    if active:
-        return dict(
-            background=color,
-            color=DARK_BG,
-            border="none",
-            borderRadius="4px",
-            padding="3px 8px",
-            cursor="pointer",
-            fontSize="9px",
-            fontWeight="700",
-            fontFamily="monospace",
-        )
-    else:
-        return dict(
-            background=CARD_BG,
-            color=color,
-            border=f"1px solid {color}",
-            borderRadius="4px",
-            padding="3px 8px",
-            cursor="pointer",
-            fontSize="9px",
-            fontWeight="700",
-            fontFamily="monospace",
-        )
+#big number format
+def fmt_m(v: float) -> str:
+    if v >= 1e6:
+        return f"{v / 1e6:.1f} M"
+    if v >= 1e3:
+        return f"{v / 1e3:.0f} K"
+    return str(int(v))
 
-# ── APP ──
+CARD = dict(
+    background=CARD_BG,
+    border=f"1px solid {BORDER}",
+    borderRadius="6px",
+    padding="10px 12px",
+    display="flex",
+    flexDirection="column",
+    overflow="hidden",
+)
+
+def section_label(text: str) -> html.Div:
+    return html.Div(text, style=dict(
+        color=MUTED,
+        fontSize="10px",
+        letterSpacing="0.5px",
+        textTransform="uppercase",
+        marginBottom="6px",
+        fontFamily="inherit",
+    ))
+
+def kpi_pill(text: str, color: str) -> html.Div:
+    return html.Div(text, style=dict(
+        background=PAGE_BG,
+        border=f"1px solid {color}",
+        borderRadius="4px",
+        padding="3px 10px",
+        fontSize="11px",
+        color=color,
+        whiteSpace="nowrap",
+        fontFamily="inherit",
+    ))
+
+
+
 app = Dash(__name__, suppress_callback_exceptions=True)
 
-app.index_string = '''
-<!DOCTYPE html>
+app.index_string = """<!DOCTYPE html>
 <html>
 <head>
 {%metas%}
-<title>{%title%}</title>
+<title>Global Migration Flows</title>
 {%favicon%}
 {%css%}
 <style>
-
+  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
   .Select-control {
-    background-color: #0d1117 !important;
-    border-color: #30363d !important;
-    color: #e6edf3 !important;
+    background-color: #fff !important; border-color: #dde1e7 !important;
+    color: #1c2230 !important;
   }
   .Select-menu-outer {
-    background-color: #161b22 !important;
-    border-color: #30363d !important;
-    color: #e6edf3 !important;
+    background-color: #fff !important; border-color: #dde1e7 !important;
     z-index: 9999 !important;
   }
   .Select-option {
-    background-color: #161b22 !important;
-    color: #e6edf3 !important;
-    font-size: 11px !important;
+    background-color: #fff !important; color: #1c2230 !important;
+    font-size: 12px !important;
   }
   .Select-option:hover, .Select-option.is-focused {
-    background-color: #21262d !important;
-    color: #58a6ff !important;
+    background-color: #e8f0fe !important; color: #0969da !important;
   }
-  .Select-option.is-selected {
-    background-color: #1f4e8c !important;
-    color: #e6edf3 !important;
+  .Select-option.is-selected { background-color: #d2e3fc !important; }
+  .Select-value-label { color: #1c2230 !important; }
+  .Select-placeholder { color: #5a6474 !important; }
+  .Select-input input { color: #1c2230 !important; background: #fff !important; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #f7f8fa; }
+  ::-webkit-scrollbar-thumb { background: #dde1e7; border-radius: 2px; }
+  .rc-slider-handle {
+    border-color: #0969da !important;
+    background-color: #0969da !important;
   }
-  .Select-value-label { color: #e6edf3 !important; }
-  .Select-placeholder { color: #8b949e !important; }
-  .Select-input input {
-    color: #e6edf3 !important;
-    background-color: #0d1117 !important;
+  .rc-slider-handle:hover, .rc-slider-handle-dragging {
+    border-color: #0969da !important;
+    box-shadow: 0 0 0 5px rgba(9,105,218,0.2) !important;
   }
-  .Select-clear, .Select-arrow { color: #8b949e !important; }
-  ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: #0d1117; }
-  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 </style>
 {%scripts%}
 </head>
 <body>
 {%app_entry%}
-<footer>
-{%config%}
-{%scripts%}
-{%renderer%}
-</footer>
+<footer>{%config%}{%scripts%}{%renderer%}</footer>
 </body>
-</html>
-'''
+</html>"""
 
 app.layout = html.Div(style=dict(
-    background=DARK_BG,
+    background=PAGE_BG,
     height="100vh",
     width="100vw",
     overflow="hidden",
     display="flex",
     flexDirection="column",
-    fontFamily="monospace",
+    fontFamily="system-ui, -apple-system, sans-serif",
     color=TEXT,
     boxSizing="border-box",
 ), children=[
 
-    dcc.Store(id="selected-country", data=None),
-    dcc.Store(id="bar-mode", data="receivers"),
+    dcc.Store(id="sel-country", data=None),
+    dcc.Store(id="map-zoom",    data=1.0),
+    dcc.Store(id="map-mode",    data="global"),
 
-    # ── TOP NAV BAR ──
+    #header
     html.Div(style=dict(
         background=CARD_BG,
         borderBottom=f"1px solid {BORDER}",
-        padding="5px 16px",
+        padding="6px 20px",
         display="flex",
         justifyContent="space-between",
         alignItems="center",
         flexShrink="0",
     ), children=[
-        html.Div(style=dict(
-            display="flex", flexDirection="column", gap="1px"
-        ), children=[
-            html.Div("◈ MIGRATION FLOWS DASHBOARD", style=dict(
-                fontSize="13px", fontWeight="700",
-                letterSpacing="3px", color=TEXT,
-            )),
-            html.Div("Noman Shahzad · Visiliki · Stephan",
-                     style=dict(fontSize="9px", color=MUTED,
-                                letterSpacing="1px")),
+        html.Div(style=dict(display="flex", flexDirection="column", gap="1px"), children=[
+            html.Div("Global Migration Flows",
+                     style=dict(fontSize="15px", fontWeight="700", color=TEXT)),
+            html.Div("Noman Shahzad · Stepan Pshenichnyi · Vasiliki Korai",
+                     style=dict(fontSize="10px", color=MUTED)),
         ]),
-        html.Div(id="stat-cards", style=dict(
-            display="flex", gap="10px", alignItems="center",
-        )),
-        html.Div("UN IMS · 1990–2024 · 233 Countries",
-                 style=dict(fontSize="10px", color=MUTED)),
+        html.Div(id="kpi-pills",
+                 style=dict(display="flex", gap="8px", alignItems="center")),
+        html.Div(style=dict(textAlign="right"), children=[
+            html.Div("UN International Migrant Stock · 1990–2024",
+                     style=dict(fontSize="10px", color=MUTED)),
+            html.Div("Source: UN DESA · data.un.org",
+                     style=dict(fontSize="10px", color=MUTED)),
+        ]),
     ]),
 
-    # ── MAIN BODY ──
+    # year slider
     html.Div(style=dict(
-        display="flex", flex="1",
-        overflow="hidden", gap="6px", padding="6px",
+        background=CARD_BG,
+        borderBottom=f"1px solid {BORDER}",
+        padding="4px 20px 8px",
+        flexShrink="0",
     ), children=[
-
-        # ── SIDEBAR ──
-        html.Div(style=dict(
-            width="170px", minWidth="170px",
-            background=CARD_BG,
-            border=f"1px solid {BORDER}",
-            borderRadius="6px",
-            padding="12px 10px",
-            display="flex", flexDirection="column",
-            gap="10px", flexShrink="0", overflowY="auto",
-        ), children=[
-
-            html.Div("FILTERS", style=dict(
-                color=TEXT, fontSize="9px", letterSpacing="2px",
-                borderBottom=f"1px solid {BORDER}",
-                paddingBottom="6px", fontWeight="700",
+        html.Div(style=dict(display="flex", alignItems="center", gap="16px"), children=[
+            html.Div("Year", style=dict(
+                color=TEXT, fontSize="12px", fontWeight="600", whiteSpace="nowrap",
             )),
-
-            html.Div([
-                html.Label("Year", style=dict(
-                    color=TEXT, fontSize="11px", fontWeight="600",
-                    marginBottom="4px", display="block",
-                )),
-                dcc.Slider(
-                    id="year-slider",
-                    min=YEARS[0], max=YEARS[-1], step=None,
-                    marks={int(y): dict(label=str(y), style=dict(
-                        fontSize="10px", color=TEXT, fontWeight="600"
-                    )) for y in YEARS},
-                    value=2024,
-                    tooltip=dict(placement="right",
-                                 always_visible=False),
-                    vertical=True, verticalHeight=180,
-                ),
-            ]),
-
-            html.Div([
-                html.Label("Top N", style=dict(
-                    color=TEXT, fontSize="11px", fontWeight="600",
-                    marginBottom="4px", display="block",
-                )),
-                dcc.Slider(
-                    id="topn-slider",
-                    min=5, max=20, step=5,
-                    marks={i: dict(label=str(i), style=dict(
-                        fontSize="10px", color=TEXT, fontWeight="600"
-                    )) for i in [5, 10, 15, 20]},
-                    value=10,
-                    tooltip=dict(placement="right",
-                                 always_visible=False),
-                    vertical=True, verticalHeight=80,
-                ),
-            ]),
-
-            html.Div("COUNTRY FILTER", style=dict(
-                color=TEXT, fontSize="9px", letterSpacing="2px",
-                borderBottom=f"1px solid {BORDER}",
-                paddingBottom="6px", fontWeight="700",
-                marginTop="4px",
-            )),
-
-            html.Div([
-                html.Label("🟢 Receiver", style=dict(
-                    color=GREEN, fontSize="10px", fontWeight="700",
-                    marginBottom="4px", display="block",
-                )),
-                dcc.Dropdown(
-                    id="recv-filter",
-                    options=[{"label": c, "value": c}
-                             for c in COUNTRIES],
-                    value=None, placeholder="All receivers...",
-                    clearable=True, style=DD_STYLE,
-                ),
-            ]),
-
-            html.Div([
-                html.Label("🟠 Sender", style=dict(
-                    color=ACCENT2, fontSize="10px", fontWeight="700",
-                    marginBottom="4px", display="block",
-                )),
-                dcc.Dropdown(
-                    id="send-filter",
-                    options=[{"label": c, "value": c}
-                             for c in COUNTRIES],
-                    value=None, placeholder="All senders...",
-                    clearable=True, style=DD_STYLE,
-                ),
-            ]),
-
-            html.Button(
-                "⟳ Reset All", id="reset-btn", n_clicks=0,
-                style=dict(
-                    background=DARK_BG, color=ACCENT,
-                    border=f"1px solid {ACCENT}",
-                    borderRadius="4px", padding="6px 10px",
-                    cursor="pointer", fontSize="11px",
-                    marginTop="4px", width="100%",
-                ),
+            dcc.Slider(
+                id="year-slider",
+                min=YEARS[0], max=YEARS[-1], step=None,
+                marks={int(y): dict(label=str(y), style=dict(
+                    fontSize="11px", color=MUTED,
+                )) for y in YEARS},
+                value=2024,
+                included=False,
             ),
-
-            html.Div(id="selected-label", style=dict(
-                color=ACCENT2, fontSize="9px",
-                textAlign="center", wordBreak="break-word",
-                marginTop="4px",
-            )),
-
         ]),
+    ]),
 
-        # ── CENTRE ──
+    html.Div(style=dict(
+        flex="1",
+        overflow="hidden",
+        display="flex",
+        flexDirection="column",
+        gap="6px",
+        padding="6px",
+    ), children=[
         html.Div(style=dict(
-            display="flex", flexDirection="column",
-            gap="6px", overflow="hidden",
-            width="42%", flexShrink="0",
-        ), children=[
-
-            # Sankey
-            html.Div(style=dict(
-                flex="2", background=CARD_BG,
-                border=f"1px solid {BORDER}",
-                borderRadius="6px", padding="8px",
-                display="flex", flexDirection="column",
-                overflow="hidden",
-            ), children=[
-                html.Div("🔀 ORIGIN → DESTINATION FLOWS",
-                         style=dict(color=MUTED, fontSize="9px",
-                                    letterSpacing="1px",
-                                    marginBottom="4px")),
-                dcc.Graph(id="sankey",
-                          style=dict(flex="1", minHeight="0"),
-                          config=dict(displayModeBar=False)),
-            ]),
-
-            # Bar + Donut
-            html.Div(style=dict(
-                flex="1", display="flex",
-                gap="6px", overflow="hidden",
-            ), children=[
-
-                # Bar chart card
-                html.Div(style=dict(
-                    flex="3", background=CARD_BG,
-                    border=f"1px solid {BORDER}",
-                    borderRadius="6px", padding="8px",
-                    display="flex", flexDirection="column",
-                    overflow="hidden",
-                ), children=[
-
-                    # Header: title + toggle buttons
-                    html.Div(style=dict(
-                        display="flex",
-                        justifyContent="space-between",
-                        alignItems="center",
-                        marginBottom="6px",
-                    ), children=[
-                        html.Div("🏆 TOP 5 SENDERS & RECEIVERS",
-                                 style=dict(color=MUTED, fontSize="9px",
-                                            letterSpacing="1px")),
-                        html.Div(style=dict(
-                            display="flex", gap="4px",
-                        ), children=[
-                            html.Button(
-                                "🟢 Receivers",
-                                id="btn-recv",
-                                n_clicks=0,
-                                style=btn_style(True, GREEN),
-                            ),
-                            html.Button(
-                                "🟠 Senders",
-                                id="btn-send",
-                                n_clicks=0,
-                                style=btn_style(False, ACCENT2),
-                            ),
-                        ]),
-                    ]),
-
-                    dcc.Graph(id="bar-compare",
-                              style=dict(flex="1", minHeight="0"),
-                              config=dict(displayModeBar=False)),
-                ]),
-
-                # Donut
-                html.Div(style=dict(
-                    flex="2", background=CARD_BG,
-                    border=f"1px solid {BORDER}",
-                    borderRadius="6px", padding="8px",
-                    display="flex", flexDirection="column",
-                    overflow="hidden",
-                ), children=[
-                    html.Div("🍩 TOP 5 SHARE (%)",
-                             style=dict(color=MUTED, fontSize="9px",
-                                        letterSpacing="1px",
-                                        marginBottom="4px")),
-                    dcc.Graph(id="donut",
-                              style=dict(flex="1", minHeight="0"),
-                              config=dict(displayModeBar=False)),
-                ]),
-
-            ]),
-
-        ]),
-
-        # ── RIGHT: Map + Time Series ──
-        html.Div(style=dict(
-            flex="1", display="flex",
-            flexDirection="column", gap="6px",
+            flex="3",
+            display="flex",
+            gap="6px",
             overflow="hidden",
         ), children=[
-
-            html.Div(style=dict(
-                flex="3", background=CARD_BG,
-                border=f"1px solid {BORDER}",
-                borderRadius="6px", padding="8px",
-                display="flex", flexDirection="column",
-                overflow="hidden",
-            ), children=[
-                html.Div(
-                    "🌍 GLOBAL MIGRANT STOCK · click a country to filter",
-                    style=dict(color=MUTED, fontSize="9px",
-                               letterSpacing="1px",
-                               marginBottom="4px")),
-                dcc.Graph(id="choropleth",
-                          style=dict(flex="1", minHeight="0"),
-                          config=dict(displayModeBar=False)),
+            html.Div(style=dict(flex="3", **CARD), children=[
+                html.Div(style=dict(
+                    display="flex", justifyContent="space-between",
+                    alignItems="center", marginBottom="6px",
+                ), children=[
+                    html.Div(id="map-label", style=dict(
+                        color=MUTED, fontSize="10px", letterSpacing="0.5px",
+                        textTransform="uppercase", fontFamily="inherit",
+                    ), children="Global Migrant Stock  ·  Click a country to explore"),
+                    html.Div(id="map-toggles", style=dict(display="none"), children=[
+                        html.Button("Origins",      id="btn-origins", n_clicks=0,
+                                    style=dict(background=ACCENT, color="#fff",
+                                               border="none", borderRadius="4px",
+                                               padding="2px 10px", cursor="pointer",
+                                               fontSize="10px", fontFamily="inherit")),
+                        html.Button("Destinations", id="btn-dest",    n_clicks=0,
+                                    style=dict(background=PAGE_BG, color=SENDER,
+                                               border=f"1px solid {SENDER}",
+                                               borderRadius="4px", padding="2px 10px",
+                                               cursor="pointer", fontSize="10px",
+                                               fontFamily="inherit")),
+                    ]),
+                ]),
+                dcc.Graph(
+                    id="choropleth",
+                    style=dict(flex="1", minHeight="0"),
+                    config=dict(displayModeBar=False, responsive=True),
+                ),
+                html.Div(id="map-footer", style=dict(
+                    display="none", justifyContent="flex-end", marginTop="4px",
+                ), children=[
+                    html.Button(
+                        "Clear selection",
+                        id="clear-btn", n_clicks=0,
+                        style=dict(
+                            background=PAGE_BG, color=MUTED,
+                            border=f"1px solid {BORDER}",
+                            borderRadius="4px", padding="2px 8px",
+                            cursor="pointer", fontSize="10px",
+                            fontFamily="inherit",
+                        ),
+                    ),
+                ]),
             ]),
 
             html.Div(style=dict(
-                flex="2", background=CARD_BG,
-                border=f"1px solid {BORDER}",
-                borderRadius="6px", padding="8px",
-                display="flex", flexDirection="column",
+                flex="2",
+                display="flex",
+                flexDirection="column",
+                gap="6px",
                 overflow="hidden",
             ), children=[
-                html.Div("📈 MIGRANT STOCK TRENDS",
-                         style=dict(color=MUTED, fontSize="9px",
-                                    letterSpacing="1px",
-                                    marginBottom="4px")),
-                dcc.Graph(id="time-series",
-                          style=dict(flex="1", minHeight="0"),
-                          config=dict(displayModeBar=False)),
+                html.Div(style=dict(flex="1", **CARD), children=[
+                    html.Div(id="label-recv", style=dict(
+                        color=MUTED, fontSize="10px", letterSpacing="0.5px",
+                        textTransform="uppercase", marginBottom="6px",
+                        fontFamily="inherit",
+                    ), children="Top 5 Receivers Worldwide"),
+                    dcc.Graph(
+                        id="bar-recv",
+                        style=dict(flex="1", minHeight="0"),
+                        config=dict(displayModeBar=False),
+                    ),
+                ]),
+                html.Div(style=dict(flex="1", **CARD), children=[
+                    html.Div(id="label-send", style=dict(
+                        color=MUTED, fontSize="10px", letterSpacing="0.5px",
+                        textTransform="uppercase", marginBottom="6px",
+                        fontFamily="inherit",
+                    ), children="Top 5 Senders Worldwide"),
+                    dcc.Graph(
+                        id="bar-send",
+                        style=dict(flex="1", minHeight="0"),
+                        config=dict(displayModeBar=False),
+                    ),
+                ]),
             ]),
-
         ]),
+        html.Div(id="detail-panel", style=dict(display="none"), children=[
+            html.Div(style=dict(flex="1", **CARD), children=[
+                html.Div(id="gender-title", style=dict(
+                    color=MUTED, fontSize="10px",
+                    letterSpacing="0.5px", textTransform="uppercase",
+                    marginBottom="6px",
+                )),
+                dcc.Graph(
+                    id="gender-chart",
+                    style=dict(flex="1", minHeight="0"),
+                    config=dict(displayModeBar=False),
+                ),
+            ]),
 
+            html.Div(style=dict(flex="1", **CARD), children=[
+                html.Div(id="label-timeseries", style=dict(
+                    color=MUTED, fontSize="10px", letterSpacing="0.5px",
+                    textTransform="uppercase", marginBottom="6px",
+                    fontFamily="inherit",
+                ), children="Migration Trends  ·  1990–2024"),
+                dcc.Graph(
+                    id="timeseries",
+                    style=dict(flex="1", minHeight="0"),
+                    config=dict(displayModeBar=False),
+                ),
+            ]),
+        ]),
     ]),
-
 ])
 
-# ── CALLBACKS ──
-
 @callback(
-    Output("bar-mode",  "data"),
-    Output("btn-recv",  "style"),
-    Output("btn-send",  "style"),
-    Input("btn-recv",   "n_clicks"),
-    Input("btn-send",   "n_clicks"),
+    Output("sel-country", "data"),
+    Input("choropleth",   "clickData"),
+    Input("clear-btn",    "n_clicks"),
+    State("sel-country",  "data"),
 )
-def toggle_bar_mode(r_clicks, s_clicks):
+def update_selection(map_click, clear_n, current):
     from dash import ctx
-    trigger = ctx.triggered_id
-    if trigger == "btn-send":
-        return (
-            "senders",
-            btn_style(False, GREEN),
-            btn_style(True,  ACCENT2),
-        )
-    return (
-        "receivers",
-        btn_style(True,  GREEN),
-        btn_style(False, ACCENT2),
-    )
-
-
-@callback(
-    Output("selected-country", "data"),
-    Input("choropleth",  "clickData"),
-    Input("bar-compare", "clickData"),
-    Input("reset-btn",   "n_clicks"),
-    State("selected-country", "data"),
-)
-def update_selected(map_click, bar_click, reset, current):
-    from dash import ctx
-    trigger = ctx.triggered_id
-    if trigger == "reset-btn":
+    if ctx.triggered_id == "clear-btn":
         return None
-    if trigger == "choropleth" and map_click:
-        pts     = map_click["points"][0]
-        country = pts.get("location") or pts.get("text")
-        return None if country == current else country
-    if trigger == "bar-compare" and bar_click:
-        country = bar_click["points"][0].get("y")
-        return None if country == current else country
+    if ctx.triggered_id == "choropleth" and map_click:
+        clicked = map_click["points"][0].get("location")
+        return None if clicked == current else clicked
     return current
 
 
 @callback(
-    Output("selected-label", "children"),
-    Input("selected-country", "data"),
+    Output("detail-panel", "style"),
+    Input("sel-country",   "data"),
 )
-def update_label(country):
-    if not country:
-        return "Click chart to filter"
-    return f"● {country}"
+def toggle_detail_panel(country):
+    if country:
+        return dict(flex="2", display="flex", gap="6px", overflow="hidden")
+    return dict(display="none")
 
 
 @callback(
-    Output("stat-cards", "children"),
-    Input("year-slider",      "value"),
-    Input("selected-country", "data"),
+    Output("kpi-pills",  "children"),
+    Input("year-slider", "value"),
+    Input("sel-country", "data"),
 )
-def update_stats(year, country):
-    yr = df[df["year"] == year]
+def update_kpi(year, country):
+    yr_dest = AGG_DEST[AGG_DEST["year"] == year]
+    yr_orig = AGG_ORIG[AGG_ORIG["year"] == year]
+
     if country:
-        total = yr[yr["destination"] == country]["migrant_stock"].sum()
-        sent  = yr[yr["origin"] == country]["migrant_stock"].sum()
-        recv  = f"{total/1e6:.1f}M received"
-        send  = f"{sent/1e6:.1f}M sent"
-        label = country[:16]
-    else:
-        total = yr.groupby("destination")["migrant_stock"].sum().sum()
-        recv  = yr.groupby("destination")["migrant_stock"].sum().idxmax()
-        send  = yr.groupby("origin")["migrant_stock"].sum().idxmax()
-        label = f"{total/1e6:.0f}M total"
+        recv = float(yr_dest.loc[yr_dest["destination"] == country,
+                                 "migrant_stock"].sum())
+        sent = float(yr_orig.loc[yr_orig["origin"] == country,
+                                 "migrant_stock"].sum())
+        return [
+            kpi_pill(str(year), MUTED),
+            kpi_pill(shorten(country), ACCENT),
+            kpi_pill(f"Received  {fmt_m(recv)}", ACCENT),
+            kpi_pill(f"Sent  {fmt_m(sent)}", SENDER),
+        ]
 
-    def pill(text, color):
-        return html.Div(text, style=dict(
-            background=DARK_BG,
-            border=f"1px solid {color}",
-            borderRadius="4px",
-            padding="4px 10px",
-            fontSize="11px",
-            color=color,
-            whiteSpace="nowrap",
-        ))
-
+    total = float(yr_dest["migrant_stock"].sum())
+    top_r = shorten(yr_dest.nlargest(1, "migrant_stock")["destination"].values[0])
+    top_s = shorten(yr_orig.nlargest(1, "migrant_stock")["origin"].values[0])
     return [
-        pill(label, ACCENT),
-        pill(recv,  GREEN),
-        pill(send,  ACCENT2),
+        kpi_pill(str(year), MUTED),
+        kpi_pill(f"Global total  {fmt_m(total)}", MUTED),
+        kpi_pill(f"Top receiver  {top_r}", ACCENT),
+        kpi_pill(f"Top sender  {top_s}", SENDER),
     ]
 
+@callback(
+    Output("map-zoom",   "data"),
+    Input("choropleth",  "relayoutData"),
+    State("map-zoom",    "data"),
+    prevent_initial_call=True,
+)
+def track_zoom(relayout, current_zoom):
+    if relayout and "geo.projection.scale" in relayout:
+        return float(relayout["geo.projection.scale"])
+    return current_zoom
+
+@callback(
+    Output("map-mode",     "data"),
+    Output("map-toggles",  "style"),
+    Output("btn-origins",  "style"),
+    Output("btn-dest",     "style"),
+    Output("map-label",    "children"),
+    Output("map-footer",   "style"),
+    Input("btn-origins",   "n_clicks"),
+    Input("btn-dest",      "n_clicks"),
+    Input("sel-country",   "data"),
+    State("map-mode",      "data"),
+)
+def update_map_controls(orig_n, dest_n, selected, current_mode):
+    from dash import ctx
+    tog_hidden  = dict(display="none")
+    tog_visible = dict(display="flex", gap="4px")
+
+    def orig_style(active):
+        if active:
+            return dict(background=ACCENT, color="#fff", border="none",
+                        borderRadius="4px", padding="2px 10px",
+                        cursor="pointer", fontSize="10px", fontFamily="inherit")
+        return dict(background=PAGE_BG, color=ACCENT,
+                    border=f"1px solid {ACCENT}", borderRadius="4px",
+                    padding="2px 10px", cursor="pointer",
+                    fontSize="10px", fontFamily="inherit")
+
+    def dest_style(active):
+        if active:
+            return dict(background=SENDER, color="#fff", border="none",
+                        borderRadius="4px", padding="2px 10px",
+                        cursor="pointer", fontSize="10px", fontFamily="inherit")
+        return dict(background=PAGE_BG, color=SENDER,
+                    border=f"1px solid {SENDER}", borderRadius="4px",
+                    padding="2px 10px", cursor="pointer",
+                    fontSize="10px", fontFamily="inherit")
+
+    footer_hidden  = dict(display="none")
+    footer_visible = dict(display="flex", justifyContent="flex-end", marginTop="4px")
+
+    if not selected:
+        return ("global", tog_hidden,
+                orig_style(True), dest_style(False),
+                "Global Migrant Stock  ·  Click a country to explore",
+                footer_hidden)
+
+    if ctx.triggered_id == "btn-origins":
+        mode = "origins"
+    elif ctx.triggered_id == "btn-dest":
+        mode = "destinations"
+    elif ctx.triggered_id == "sel-country":
+        mode = "origins" 
+    else:
+        mode = current_mode
+
+    label = f"Migration map  ·  {shorten(selected)}"
+    return (mode, tog_visible,
+            orig_style(mode == "origins"),
+            dest_style(mode == "destinations"),
+            label, footer_visible)
 
 @callback(
     Output("choropleth", "figure"),
-    Input("year-slider",      "value"),
-    Input("selected-country", "data"),
+    Input("year-slider", "value"),
+    Input("sel-country", "data"),
+    Input("map-zoom",    "data"),
+    Input("map-mode",    "data"),
 )
-def update_choropleth(year, selected):
-    agg = (
-        df[df["year"] == year]
-        .groupby("destination", as_index=False)["migrant_stock"].sum()
-        .dropna()
-    )
-    max_val = agg["migrant_stock"].max()
-    traces  = []
+def update_map(year, selected, zoom_scale, map_mode):
+    agg = AGG_DEST[AGG_DEST["year"] == year].copy()
+    fig = go.Figure()
 
-    for _, row in agg.iterrows():
-        country = row["destination"]
-        val     = row["migrant_stock"]
-        is_sel  = selected and country == selected
-        opacity = 1.0 if not selected or is_sel else 0.2
-        color   = HIGHLIGHT if is_sel else COUNTRY_COLOR.get(country, ACCENT)
-        traces.append(go.Choropleth(
-            locations=[country],
+    def make_colorbar(title, tickvals, ticktext, x=1.0):
+        return dict(
+            title=dict(text=title, font=dict(size=9, color=MUTED)),
+            tickvals=tickvals, ticktext=ticktext,
+            len=0.45, thickness=9, x=x,
+            tickfont=dict(size=8, color=MUTED),
+        )
+
+    log_ticks = [3, 4, 5, 6, 7]
+    log_text  = ["1 K", "10 K", "100 K", "1 M", "10 M"]
+
+    if map_mode == "global" or not selected:
+        agg["log_stock"] = np.log10(agg["migrant_stock"].clip(lower=1))
+        fig.add_trace(go.Choropleth(
+            locations=agg["destination"],
             locationmode="country names",
-            z=[val], zmin=0, zmax=max_val,
-            colorscale=[[0, color], [1, color]],
-            showscale=False, showlegend=False,
-            marker=dict(
-                opacity=opacity,
-                line=dict(
-                    color=HIGHLIGHT if is_sel else BORDER,
-                    width=2 if is_sel else 0.3,
-                ),
-            ),
-            hovertemplate=(
-                f"<b>{country}</b><br>"
-                f"Migrants: {val:,.0f}<extra></extra>"
-            ),
+            z=agg["log_stock"],
+            customdata=agg["migrant_stock"],
+            colorscale=CHORO,
+            zmin=3, zmax=np.log10(5e7),
+            showscale=True,
+            colorbar=make_colorbar("Migrants", log_ticks, log_text),
+            marker=dict(line=dict(color="#ffffff", width=0.4)),
+            hovertemplate="<b>%{location}</b><br>%{customdata:,.0f}<extra></extra>",
         ))
 
-    lats, lons, texts = [], [], []
-    for _, row in agg.iterrows():
-        c = row["destination"]
-        if c in CENTROIDS:
-            lat, lon = CENTROIDS[c]
-            lats.append(lat)
-            lons.append(lon)
-            texts.append(shorten(c))
+        if selected and selected in agg["destination"].values:
+            sel_log = float(agg.loc[agg["destination"]==selected,"log_stock"].values[0])
+            fig.add_trace(go.Choropleth(
+                locations=[selected], locationmode="country names",
+                z=[sel_log], colorscale=[[0, ACCENT],[1, ACCENT]],
+                zmin=3, zmax=np.log10(5e7),
+                showscale=False, showlegend=False,
+                marker=dict(line=dict(color="#000000", width=2.5)),
+                hoverinfo="skip",
+            ))
 
-    traces.append(go.Scattergeo(
-        lat=lats, lon=lons, text=texts, mode="text",
-        textfont=dict(size=7, color="white", family="monospace"),
+    elif map_mode == "origins":
+        flows = FLOWS_INTO[
+            (FLOWS_INTO["destination"] == selected) & (FLOWS_INTO["year"] == year)
+        ][["origin", "migrant_stock"]].copy()
+
+        if not flows.empty:
+            flows["log_stock"] = np.log10(flows["migrant_stock"].clip(lower=1))
+            zmax_val = max(float(flows["log_stock"].max()), 3.1)
+            fig.add_trace(go.Choropleth(
+                locations=flows["origin"],
+                locationmode="country names",
+                z=flows["log_stock"],
+                customdata=flows["migrant_stock"],
+                colorscale="Blues",
+                zmin=3, zmax=zmax_val,
+                showscale=True,
+                colorbar=make_colorbar(
+                    f"Into {shorten(selected)}", log_ticks, log_text),
+                marker=dict(line=dict(color="#ffffff", width=0.4)),
+                hovertemplate="<b>%{location}</b><br>%{customdata:,.0f}<extra></extra>",
+            ))
+
+        fig.add_trace(go.Choropleth(
+            locations=[selected], locationmode="country names",
+            z=[1], colorscale=[[0, ACCENT],[1, ACCENT]],
+            zmin=0, zmax=1,
+            showscale=False, showlegend=False,
+            marker=dict(line=dict(color="#000000", width=2.5)),
+            hovertemplate=f"<b>{shorten(selected)}</b><extra></extra>",
+        ))
+
+    else:
+        flows = FLOWS_FROM[
+            (FLOWS_FROM["origin"] == selected) & (FLOWS_FROM["year"] == year)
+        ][["destination", "migrant_stock"]].copy()
+
+        if not flows.empty:
+            flows["log_stock"] = np.log10(flows["migrant_stock"].clip(lower=1))
+            zmax_val = max(float(flows["log_stock"].max()), 3.1)
+            fig.add_trace(go.Choropleth(
+                locations=flows["destination"],
+                locationmode="country names",
+                z=flows["log_stock"],
+                customdata=flows["migrant_stock"],
+                colorscale="Oranges",
+                zmin=3, zmax=zmax_val,
+                showscale=True,
+                colorbar=make_colorbar(
+                    f"From {shorten(selected)}", log_ticks, log_text),
+                marker=dict(line=dict(color="#ffffff", width=0.4)),
+                hovertemplate="<b>%{location}</b><br>%{customdata:,.0f}<extra></extra>",
+            ))
+
+        fig.add_trace(go.Choropleth(
+            locations=[selected], locationmode="country names",
+            z=[1], colorscale=[[0, ACCENT],[1, ACCENT]],
+            zmin=0, zmax=1,
+            showscale=False, showlegend=False,
+            marker=dict(line=dict(color="#000000", width=2.5)),
+            hovertemplate=f"<b>{shorten(selected)}</b><extra></extra>",
+        ))
+
+    visible = set(CENTROIDS.keys()) if (zoom_scale or 1.0) > 2.5 else LARGE_COUNTRIES
+    lats, lons, lbl = [], [], []
+    src_countries = agg["destination"].tolist()
+    for c in src_countries:
+        if c in CENTROIDS and c in visible:
+            lat, lon = CENTROIDS[c]
+            lats.append(lat); lons.append(lon)
+            lbl.append(shorten(c))
+    fig.add_trace(go.Scattergeo(
+        lat=lats, lon=lons, text=lbl, mode="text",
+        textfont=dict(size=6, color="#444"),
         hoverinfo="skip", showlegend=False,
     ))
 
-    fig = go.Figure(data=traces)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=10),
-        margin=dict(l=0, r=0, t=0, b=0),
+        font=dict(color=TEXT, size=11),
+        margin=dict(l=0, r=30, t=0, b=0),
+        uirevision=f"{selected or 'none'}-{map_mode}",
         geo=dict(
-            showland=True, landcolor="#1a2332",
-            showocean=True, oceancolor="#0d1117",
-            showcountries=True, countrycolor="#30363d",
+            showland=True,landcolor="#e8ecf0",
+            showocean=True,oceancolor="#d6e8f7",
+            showcountries=True,countrycolor="#ffffff",
             bgcolor="rgba(0,0,0,0)",
             projection_type="equirectangular",
             showframe=False,
@@ -668,294 +709,301 @@ def update_choropleth(year, selected):
     return fig
 
 
-@callback(
-    Output("sankey", "figure"),
-    Input("year-slider",      "value"),
-    Input("topn-slider",      "value"),
-    Input("selected-country", "data"),
-    Input("recv-filter",      "value"),
-    Input("send-filter",      "value"),
-)
-def update_sankey(year, top_n, selected, recv_f, send_f):
-    subset = df[df["year"] == year].dropna(subset=["migrant_stock"])
-    if selected:
-        subset = subset[
-            (subset["origin"] == selected) |
-            (subset["destination"] == selected)
-        ]
-    if recv_f:
-        subset = subset[subset["destination"] == recv_f]
-    if send_f:
-        subset = subset[subset["origin"] == send_f]
-
-    flows = (
-        subset.sort_values("migrant_stock", ascending=False)
-        .head(top_n)[["origin", "destination", "migrant_stock"]]
-    )
-
-    if flows.empty:
-        return go.Figure(layout=go.Layout(
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color=TEXT),
-        ))
-
-    nodes     = list(pd.unique(
-        flows[["origin", "destination"]].values.ravel()
-    ))
-    idx       = {n: i for i, n in enumerate(nodes)}
-    node_cols = [COUNTRY_COLOR.get(n, ACCENT) for n in nodes]
-
-    fig = go.Figure(go.Sankey(
-        arrangement="snap",
-        node=dict(
-            pad=6, thickness=12,
-            line=dict(color=BORDER, width=0.5),
-            label=nodes, color=node_cols,
-            hovertemplate="%{label}<extra></extra>",
-        ),
-        link=dict(
-            source=flows["origin"].map(idx),
-            target=flows["destination"].map(idx),
-            value=flows["migrant_stock"],
-            color="rgba(88,166,255,0.18)",
-            hovertemplate=(
-                "%{source.label}→%{target.label}"
-                "<br>%{value:,.0f}<extra></extra>"
-            ),
-        ),
-        textfont=dict(color=TEXT, size=8),
-    ))
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT),
-        margin=dict(l=0, r=0, t=0, b=0),
-    )
-    return fig
-
-
-@callback(
-    Output("bar-compare", "figure"),
-    Input("year-slider",      "value"),
-    Input("selected-country", "data"),
-    Input("recv-filter",      "value"),
-    Input("send-filter",      "value"),
-    Input("bar-mode",         "data"),
-)
-def update_bar(year, selected, recv_f, send_f, mode):
-    n  = 5
-    yr = df[df["year"] == year]
-
-    if mode == "receivers":
-        src = yr.copy()
-        if recv_f:
-            src = src[src["destination"] == recv_f]
-        data = (
-            src.groupby("destination")["migrant_stock"].sum()
-            .nlargest(n).reset_index()
-            .rename(columns={"destination": "country",
-                             "migrant_stock": "value"})
-        )
-        bar_color_base = GREEN
-    else:
-        src = yr.copy()
-        if send_f:
-            src = src[src["origin"] == send_f]
-        data = (
-            src.groupby("origin")["migrant_stock"].sum()
-            .nlargest(n).reset_index()
-            .rename(columns={"origin": "country",
-                             "migrant_stock": "value"})
-        )
-        bar_color_base = ACCENT2
-
-    data["short"] = data["country"].apply(shorten)
-
-    colors = [
-        HIGHLIGHT if selected and c == selected
-        else COUNTRY_COLOR.get(c, bar_color_base)
-        for c in data["country"]
-    ]
-    opacities = [
-        1.0 if not selected or c == selected else 0.35
-        for c in data["country"]
-    ]
-
+def _build_bar(data: pd.DataFrame, bar_color: str) -> go.Figure:
     fig = go.Figure(go.Bar(
         y=data["short"],
         x=data["value"],
         orientation="h",
-        marker=dict(
-            color=colors,
-            opacity=opacities,
-            line=dict(color=bar_color_base, width=1),
-        ),
-        text=data["value"].apply(lambda v: f"{v/1e6:.1f}M"),
+        customdata=data["country"],
+        marker=dict(color=bar_color, line=dict(width=0)),
+        text=data["value"].apply(fmt_m),
         textposition="outside",
-        textfont=dict(color=TEXT, size=10, family="monospace"),
+        textfont=dict(color=MUTED, size=9),
         hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
     ))
-
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=TEXT),
         xaxis=dict(
-            tickformat=",.0f",
-            gridcolor=GRID,
+            tickformat=",.0s", gridcolor=GRID,
             tickfont=dict(size=8, color=MUTED),
-            range=[0, data["value"].max() * 1.35],
+            range=[0, float(data["value"].max()) * 1.38],
+            showline=False,
         ),
         yaxis=dict(
-            gridcolor=GRID,
+            gridcolor="rgba(0,0,0,0)",
             autorange="reversed",
-            tickfont=dict(color=TEXT, size=9),
+            tickfont=dict(color=TEXT, size=10),
         ),
-        margin=dict(l=0, r=60, t=4, b=0),
+        margin=dict(l=0, r=45, t=2, b=0),
         showlegend=False,
-        bargap=0.25,
+        bargap=0.3,
     )
     return fig
 
 
 @callback(
-    Output("donut", "figure"),
-    Input("year-slider",      "value"),
-    Input("selected-country", "data"),
-    Input("recv-filter",      "value"),
-    Input("send-filter",      "value"),
+    Output("bar-recv",   "figure"),
+    Output("label-recv", "children"),
+    Input("year-slider", "value"),
+    Input("sel-country", "data"),
 )
-def update_donut(year, selected, recv_f, send_f):
-    yr = df[df["year"] == year]
-
-    if recv_f:
-        agg = (yr[yr["destination"] == recv_f]
-               .groupby("origin")["migrant_stock"].sum()
-               .nlargest(5).reset_index()
-               .rename(columns={"origin": "country",
-                                "migrant_stock": "value"}))
-        title = f"Into {recv_f[:10]}"
-    elif send_f:
-        agg = (yr[yr["origin"] == send_f]
-               .groupby("destination")["migrant_stock"].sum()
-               .nlargest(5).reset_index()
-               .rename(columns={"destination": "country",
-                                "migrant_stock": "value"}))
-        title = f"From {send_f[:10]}"
-    elif selected:
-        agg = (yr[yr["destination"] == selected]
-               .groupby("origin")["migrant_stock"].sum()
-               .nlargest(5).reset_index()
-               .rename(columns={"origin": "country",
-                                "migrant_stock": "value"}))
-        title = f"Into {selected[:10]}"
+def update_bar_recv(year, selected):
+    if selected:
+        subset = (
+            FLOWS_INTO[
+                (FLOWS_INTO["destination"] == selected) & (FLOWS_INTO["year"] == year)
+            ][["origin", "migrant_stock"]]
+            .nlargest(5, "migrant_stock")
+            .rename(columns={"origin": "country", "migrant_stock": "value"})
+        )
+        label = f"Top 5 Origins for {shorten(selected)}"
     else:
-        agg = (yr.groupby("destination")["migrant_stock"].sum()
-               .nlargest(5).reset_index()
-               .rename(columns={"destination": "country",
-                                "migrant_stock": "value"}))
-        title = "Top 5 Receivers"
+        subset = (
+            AGG_DEST[AGG_DEST["year"] == year]
+            .nlargest(5, "migrant_stock")
+            .rename(columns={"destination": "country", "migrant_stock": "value"})
+            .copy()
+        )
+        label = "Top 5 Receivers Worldwide"
 
-    total  = agg["value"].sum()
-    labels = agg["country"].apply(shorten)
-    colors = [COUNTRY_COLOR.get(c, ACCENT) for c in agg["country"]]
-
-    fig = go.Figure(go.Pie(
-        labels=labels,
-        values=agg["value"],
-        hole=0.55,
-        marker=dict(colors=colors,
-                    line=dict(color=DARK_BG, width=1)),
-        textinfo="percent",
-        textfont=dict(size=9, color=TEXT),
-        hovertemplate=(
-            "<b>%{label}</b><br>"
-            "%{value:,.0f} migrants<br>"
-            "%{percent}<extra></extra>"
-        ),
-        direction="clockwise",
-        sort=True,
-    ))
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=9),
-        margin=dict(l=0, r=0, t=24, b=0),
-        title=dict(
-            text=title,
-            font=dict(color=MUTED, size=9),
-            x=0.5, xanchor="center",
-        ),
-        legend=dict(
-            font=dict(color=TEXT, size=7),
-            bgcolor="rgba(0,0,0,0)",
-            orientation="v",
-            x=1.0, y=0.5,
-        ),
-        annotations=[dict(
-            text=f"{total/1e6:.1f}M",
-            x=0.5, y=0.5,
-            font=dict(size=12, color=ACCENT,
-                      family="monospace"),
-            showarrow=False,
-        )],
-    )
-    return fig
+    subset["short"] = subset["country"].apply(shorten)
+    return _build_bar(subset, ACCENT), label
 
 
 @callback(
-    Output("time-series", "figure"),
-    Input("year-slider",      "value"),
-    Input("selected-country", "data"),
-    Input("recv-filter",      "value"),
-    Input("send-filter",      "value"),
+    Output("bar-send",   "figure"),
+    Output("label-send", "children"),
+    Input("year-slider", "value"),
+    Input("sel-country", "data"),
 )
-def update_timeseries(year, selected, recv_f, send_f):
-    if recv_f:
-        countries = [recv_f]
-    elif send_f:
-        countries = (
-            df[df["origin"] == send_f]
-            .groupby("destination")["migrant_stock"].sum()
-            .nlargest(4).index.tolist()
+def update_bar_send(year, selected):
+    if selected:
+        subset = (
+            FLOWS_FROM[
+                (FLOWS_FROM["origin"] == selected) & (FLOWS_FROM["year"] == year)
+            ][["destination", "migrant_stock"]]
+            .nlargest(5, "migrant_stock")
+            .rename(columns={"destination": "country", "migrant_stock": "value"})
         )
-    elif selected:
-        countries = [selected]
+        label = f"{shorten(selected)} Emigrates to"
     else:
-        countries = (
-            df[df["year"] == year]
-            .groupby("destination")["migrant_stock"].sum()
-            .nlargest(5).index.tolist()
+        subset = (
+            AGG_ORIG[AGG_ORIG["year"] == year]
+            .nlargest(5, "migrant_stock")
+            .rename(columns={"origin": "country", "migrant_stock": "value"})
+            .copy()
         )
+        label = "Top 5 Senders Worldwide"
 
-    agg = (
-        df[df["destination"].isin(countries)]
-        .groupby(["destination", "year"], as_index=False)
-        ["migrant_stock"].sum()
-        .dropna()
-    )
-    colors = [COUNTRY_COLOR.get(c, ACCENT) for c in countries]
+    subset["short"] = subset["country"].apply(shorten)
+    return _build_bar(subset, SENDER), label
 
-    fig = px.line(
-        agg, x="year", y="migrant_stock",
-        color="destination", markers=True,
-        labels={"migrant_stock": "Migrants",
-                "year": "", "destination": ""},
-        color_discrete_sequence=colors,
+
+@callback(
+    Output("gender-chart", "figure"),
+    Output("gender-title", "children"),
+    Input("year-slider",   "value"),
+    Input("sel-country",   "data"),
+)
+def update_gender(year, selected):
+    from plotly.subplots import make_subplots
+    empty = go.Figure(layout=go.Layout(paper_bgcolor="rgba(0,0,0,0)"))
+    if not selected:
+        return empty, ""
+
+    recv_yr = GENDER_RECV[
+        (GENDER_RECV["destination"] == selected) & (GENDER_RECV["year"] == year)
+    ].copy()
+    sent_yr = GENDER_SENT[
+        (GENDER_SENT["origin"] == selected) & (GENDER_SENT["year"] == year)
+    ].copy()
+
+    if recv_yr.empty and sent_yr.empty:
+        return empty, f"No gender data  ·  {shorten(selected)}"
+
+    def get_val(df, sex_val):
+        row = df[df["sex"] == sex_val]
+        return float(row["migrant_stock"].values[0]) if not row.empty else 0.0
+
+    recv_male   = get_val(recv_yr, "male")
+    recv_female = get_val(recv_yr, "female")
+    sent_male   = get_val(sent_yr, "male")
+    sent_female = get_val(sent_yr, "female")
+
+    recv_total = recv_male + recv_female or 1
+    sent_total = sent_male + sent_female or 1
+
+    recv_male_pct   = recv_male   / recv_total * 100
+    recv_female_pct = recv_female / recv_total * 100
+    sent_male_pct   = sent_male   / sent_total * 100
+    sent_female_pct = sent_female / sent_total * 100
+
+    categories = ["Female", "Male"]
+    recv_vals  = [recv_female, recv_male]
+    sent_vals  = [sent_female, sent_male]
+    recv_pcts  = [recv_female_pct, recv_male_pct]
+    sent_pcts  = [sent_female_pct, sent_male_pct]
+    colors     = [FEMALE_COLOR, MALE_COLOR]
+    recv_texts = [
+        f"{fmt_m(recv_female)}  {recv_female_pct:.1f}%",
+        f"{fmt_m(recv_male)}  {recv_male_pct:.1f}%",
+    ]
+    sent_texts = [
+        f"{fmt_m(sent_female)}  {sent_female_pct:.1f}%",
+        f"{fmt_m(sent_male)}  {sent_male_pct:.1f}%",
+    ]
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        subplot_titles=["Received", "Sent"],
+        shared_xaxes=True,
+        vertical_spacing=0.18,
     )
-    fig.update_traces(line=dict(width=2), marker=dict(size=4))
+
+    fig.add_trace(go.Bar(
+        name="Received",
+        y=categories,
+        x=recv_vals,
+        orientation="h",
+        marker_color=colors,
+        text=recv_texts,
+        textposition="outside",
+        textfont=dict(size=9, color=MUTED),
+        hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
+        showlegend=False,
+    ), row=1, col=1)
+
+    fig.add_trace(go.Bar(
+        name="Sent",
+        y=categories,
+        x=sent_vals,
+        orientation="h",
+        marker_color=colors,
+        text=sent_texts,
+        textposition="outside",
+        textfont=dict(size=9, color=MUTED),
+        hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
+        showlegend=False,
+    ), row=2, col=1)
+
+    max_val = max(recv_male, recv_female, sent_male, sent_female) * 1.6 or 1
+
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=9),
-        xaxis=dict(gridcolor=GRID, tickvals=YEARS,
-                   tickfont=dict(size=8)),
-        yaxis=dict(gridcolor=GRID, tickformat=",.0f",
-                   tickfont=dict(size=8)),
-        legend=dict(bgcolor="rgba(0,0,0,0)",
-                    font=dict(size=8)),
-        margin=dict(l=0, r=0, t=0, b=0),
+        font=dict(color=TEXT, size=10),
+        margin=dict(l=0, r=0, t=28, b=0),
+        showlegend=False,
+        bargap=0.35,
     )
-    return fig
 
+    for row_idx in [1, 2]:
+        fig.update_xaxes(
+            range=[0, max_val],
+            tickformat=",.0s",
+            tickfont=dict(size=8, color=MUTED),
+            gridcolor=GRID, showline=False,
+            row=row_idx, col=1,
+        )
+        fig.update_yaxes(
+            tickfont=dict(size=10, color=TEXT),
+            showline=False, gridcolor="rgba(0,0,0,0)",
+            row=row_idx, col=1,
+        )
+
+    for ann in fig.layout.annotations:
+        ann.font.size  = 10
+        ann.font.color = MUTED
+
+    title = f"Gender Breakdown  ·  {shorten(selected)}  ·  {year}"
+    return fig, title
+
+
+
+def _nearest_countries(selected: str, n: int = 4) -> list:
+    if selected not in CENTROIDS:
+        return []
+    lat1, lon1 = CENTROIDS[selected]
+    distances = []
+    for country, (lat2, lon2) in CENTROIDS.items():
+        if country == selected:
+            continue
+        dist = ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
+        distances.append((dist, country))
+    distances.sort()
+    return [c for _, c in distances[:n]]
+
+
+@callback(
+    Output("timeseries",       "figure"),
+    Output("label-timeseries", "children"),
+    Input("year-slider",       "value"),
+    Input("sel-country",       "data"),
+)
+def update_timeseries(year, selected):
+    fig = go.Figure()
+
+    if selected:
+        neighbours = _nearest_countries(selected, n=4)
+        countries  = [selected] + neighbours
+        agg = AGG_DEST[AGG_DEST["destination"].isin(countries)].copy()
+
+        for i, country in enumerate(countries):
+            d = agg[agg["destination"] == country].sort_values("year")
+            is_sel = country == selected
+            fig.add_trace(go.Scatter(
+                x=d["year"], y=d["migrant_stock"],
+                name=shorten(country),
+                mode="lines+markers",
+                line=dict(
+                    color=ACCENT if is_sel else COUNTRY_COLOR.get(country, MUTED),
+                    width=3 if is_sel else 1.5,
+                ),
+                marker=dict(size=6 if is_sel else 3),
+                opacity=1.0 if is_sel else 0.55,
+                hovertemplate=f"{shorten(country)}: %{{y:,.0f}}<extra></extra>",
+            ))
+        label = f"Migration Trends  ·  {shorten(selected)}  vs. nearest neighbours"
+
+    else:
+        fig.add_trace(go.Scatter(
+            x=GLOBAL_TREND["year"], y=GLOBAL_TREND["migrant_stock"],
+            name="Global",
+            mode="lines+markers",
+            line=dict(color=ACCENT, width=2.5),
+            marker=dict(size=4, color=ACCENT),
+            hovertemplate="Global: %{y:,.0f}<extra></extra>",
+        ))
+        label = "Migration Trends  ·  Global Total  ·  1990–2024"
+
+    fig.add_vline(
+        x=year,
+        line_width=1,
+        line_dash="dot",
+        line_color=MUTED,
+        annotation_text=str(year),
+        annotation_font=dict(size=9, color=MUTED),
+        annotation_position="top",
+    )
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=TEXT, size=10),
+        xaxis=dict(
+            gridcolor=GRID, tickvals=YEARS,
+            tickfont=dict(size=9, color=MUTED), showline=False,
+        ),
+        yaxis=dict(
+            gridcolor=GRID, tickformat=",.0s",
+            tickfont=dict(size=9, color=MUTED), showline=False,
+        ),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=9)),
+        margin=dict(l=0, r=0, t=16, b=0),
+    )
+    return fig, label
 
 if __name__ == "__main__":
     app.run(debug=True)

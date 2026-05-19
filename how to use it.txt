@@ -1,0 +1,28 @@
+When you open it you'll see:
+
+-A world map (big, on the left)
+-Two bar charts on the right — top receivers and top senders
+-A year slider at the top
+-Some number badges in the header (these update as you explore)
+
+how do I  use it?
+
+1. Move the year slider
+Drag it left or right to change the year. Everything updates instantly. Start by sliding from 1990 to 2024 and watch the map get darker — global migration has grown a lot.
+
+2. Look at the bar charts
+
+-Top chart → countries that received the most migrants that year (blue)
+-Bottom chart → countries that sent the most migrants that year (orange)
+
+3. Click on a country
+This is where it gets interesting. Click any country on the map and:
+
+-The map switches to show where that country's migrants came from or went to
+-Two buttons appear — Origins and Destinations — toggle between them
+-A bottom panel slides open with two more charts:
+	-Gender chart — male vs. female split for that country
+	-Trend chart — migration over time, compared to the 4 nearest countries geographically. The dotted line = the year you selected.
+	
+4. Go back to global view
+Hit "Clear selection" at the bottom of the map.

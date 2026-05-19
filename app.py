@@ -457,9 +457,7 @@ def update_selection(map_click, clear_n, current):
     Input("sel-country",   "data"),
 )
 def toggle_detail_panel(country):
-    if country:
-        return dict(flex="2", display="flex", gap="6px", overflow="hidden")
-    return dict(display="none")
+    return dict(flex="2", display="flex", gap="6px", overflow="hidden")
 
 
 @callback(
@@ -809,9 +807,126 @@ def update_bar_send(year, selected):
 )
 def update_gender(year, selected):
     from plotly.subplots import make_subplots
-    empty = go.Figure(layout=go.Layout(paper_bgcolor="rgba(0,0,0,0)"))
+
+    def get_val(df, sex_val):
+        row = df[df["sex"] == sex_val]
+        return float(row["migrant_stock"].values[0]) if not row.empty else 0.0
+
+    def _build_gender_fig(male_recv, female_recv, male_sent, female_sent, subtitle):
+        recv_total = male_recv + female_recv or 1
+        sent_total = male_sent + female_sent or 1
+
+        recv_texts = [
+            f"{female_recv / recv_total * 100:.1f}%",
+            f"{male_recv   / recv_total * 100:.1f}%",
+        ]
+        sent_texts = [
+            f"{female_sent / sent_total * 100:.1f}%",
+            f"{male_sent   / sent_total * 100:.1f}%",
+        ]
+
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=["Received", "Sent"],
+            shared_xaxes=True,
+            vertical_spacing=0.18,
+        )
+
+        max_val = max(male_recv, female_recv, male_sent, female_sent) * 1.45 or 1
+
+        fig.add_trace(go.Bar(
+            name="Received",
+            y=["Female", "Male"],
+            x=[female_recv, male_recv],
+            orientation="h",
+            marker_color=[FEMALE_COLOR, MALE_COLOR],
+            text=recv_texts,
+            textposition="outside",
+            textfont=dict(size=9, color=MUTED),
+            hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
+            showlegend=False,
+        ), row=1, col=1)
+
+        fig.add_trace(go.Bar(
+            name="Sent",
+            y=["Female", "Male"],
+            x=[female_sent, male_sent],
+            orientation="h",
+            marker_color=[FEMALE_COLOR, MALE_COLOR],
+            text=sent_texts,
+            textposition="outside",
+            textfont=dict(size=9, color=MUTED),
+            hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
+            showlegend=False,
+        ), row=2, col=1)
+
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color=TEXT, size=10),
+            margin=dict(l=0, r=0, t=28, b=0),
+            showlegend=False,
+            bargap=0.35,
+        )
+        for row_idx in [1, 2]:
+            fig.update_xaxes(
+                range=[0, max_val], tickformat=",.0s",
+                tickfont=dict(size=8, color=MUTED),
+                gridcolor=GRID, showline=False,
+                row=row_idx, col=1,
+            )
+            fig.update_yaxes(
+                tickfont=dict(size=10, color=TEXT),
+                showline=False, gridcolor="rgba(0,0,0,0)",
+                row=row_idx, col=1,
+            )
+        for ann in fig.layout.annotations:
+            ann.font.size  = 10
+            ann.font.color = MUTED
+        return fig
+
     if not selected:
-        return empty, ""
+        yr_global = GENDER_GLOBAL[GENDER_GLOBAL["year"] == year]
+        if yr_global.empty:
+            return go.Figure(layout=go.Layout(paper_bgcolor="rgba(0,0,0,0)")), ""
+
+        g_male   = get_val(yr_global, "male")
+        g_female = get_val(yr_global, "female")
+        total    = g_male + g_female or 1
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            y=["Female", "Male"],
+            x=[g_female, g_male],
+            orientation="h",
+            marker_color=[FEMALE_COLOR, MALE_COLOR],
+            text=[
+                f"{g_female / total * 100:.1f}%",
+                f"{g_male   / total * 100:.1f}%",
+            ],
+            textposition="outside",
+            textfont=dict(size=9, color=MUTED),
+            hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
+            showlegend=False,
+        ))
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color=TEXT, size=10),
+            margin=dict(l=0, r=0, t=10, b=0),
+            showlegend=False,
+            bargap=0.4,
+            xaxis=dict(
+                range=[0, max(g_male, g_female) * 1.45],
+                tickformat=",.0s", tickfont=dict(size=8, color=MUTED),
+                gridcolor=GRID, showline=False,
+            ),
+            yaxis=dict(
+                tickfont=dict(size=10, color=TEXT),
+                showline=False, gridcolor="rgba(0,0,0,0)",
+            ),
+        )
+        return fig, f"Global Gender Breakdown  ·  {year}"
 
     recv_yr = GENDER_RECV[
         (GENDER_RECV["destination"] == selected) & (GENDER_RECV["year"] == year)
@@ -821,105 +936,16 @@ def update_gender(year, selected):
     ].copy()
 
     if recv_yr.empty and sent_yr.empty:
-        return empty, f"No gender data  ·  {shorten(selected)}"
-
-    def get_val(df, sex_val):
-        row = df[df["sex"] == sex_val]
-        return float(row["migrant_stock"].values[0]) if not row.empty else 0.0
+        return go.Figure(layout=go.Layout(paper_bgcolor="rgba(0,0,0,0)")), \
+               f"No gender data  ·  {shorten(selected)}"
 
     recv_male   = get_val(recv_yr, "male")
     recv_female = get_val(recv_yr, "female")
     sent_male   = get_val(sent_yr, "male")
     sent_female = get_val(sent_yr, "female")
 
-    recv_total = recv_male + recv_female or 1
-    sent_total = sent_male + sent_female or 1
-
-    recv_male_pct   = recv_male   / recv_total * 100
-    recv_female_pct = recv_female / recv_total * 100
-    sent_male_pct   = sent_male   / sent_total * 100
-    sent_female_pct = sent_female / sent_total * 100
-
-    categories = ["Female", "Male"]
-    recv_vals  = [recv_female, recv_male]
-    sent_vals  = [sent_female, sent_male]
-    recv_pcts  = [recv_female_pct, recv_male_pct]
-    sent_pcts  = [sent_female_pct, sent_male_pct]
-    colors     = [FEMALE_COLOR, MALE_COLOR]
-    recv_texts = [
-        f"{fmt_m(recv_female)}  {recv_female_pct:.1f}%",
-        f"{fmt_m(recv_male)}  {recv_male_pct:.1f}%",
-    ]
-    sent_texts = [
-        f"{fmt_m(sent_female)}  {sent_female_pct:.1f}%",
-        f"{fmt_m(sent_male)}  {sent_male_pct:.1f}%",
-    ]
-
-    fig = make_subplots(
-        rows=2, cols=1,
-        subplot_titles=["Received", "Sent"],
-        shared_xaxes=True,
-        vertical_spacing=0.18,
-    )
-
-    fig.add_trace(go.Bar(
-        name="Received",
-        y=categories,
-        x=recv_vals,
-        orientation="h",
-        marker_color=colors,
-        text=recv_texts,
-        textposition="outside",
-        textfont=dict(size=9, color=MUTED),
-        hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
-        showlegend=False,
-    ), row=1, col=1)
-
-    fig.add_trace(go.Bar(
-        name="Sent",
-        y=categories,
-        x=sent_vals,
-        orientation="h",
-        marker_color=colors,
-        text=sent_texts,
-        textposition="outside",
-        textfont=dict(size=9, color=MUTED),
-        hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
-        showlegend=False,
-    ), row=2, col=1)
-
-    max_val = max(recv_male, recv_female, sent_male, sent_female) * 1.6 or 1
-
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=10),
-        margin=dict(l=0, r=0, t=28, b=0),
-        showlegend=False,
-        bargap=0.35,
-    )
-
-    for row_idx in [1, 2]:
-        fig.update_xaxes(
-            range=[0, max_val],
-            tickformat=",.0s",
-            tickfont=dict(size=8, color=MUTED),
-            gridcolor=GRID, showline=False,
-            row=row_idx, col=1,
-        )
-        fig.update_yaxes(
-            tickfont=dict(size=10, color=TEXT),
-            showline=False, gridcolor="rgba(0,0,0,0)",
-            row=row_idx, col=1,
-        )
-
-    for ann in fig.layout.annotations:
-        ann.font.size  = 10
-        ann.font.color = MUTED
-
-    title = f"Gender Breakdown  ·  {shorten(selected)}  ·  {year}"
-    return fig, title
-
+    fig = _build_gender_fig(recv_male, recv_female, sent_male, sent_female, selected)
+    return fig, f"Gender Breakdown  ·  {shorten(selected)}  ·  {year}"
 
 
 def _nearest_countries(selected: str, n: int = 4) -> list:

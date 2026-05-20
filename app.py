@@ -4,7 +4,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dash import Dash, dcc, html, Input, Output, State, callback
 
-# colors we use throughout the app
 BG_COLOR = "#f7f8fa"
 WHITE = "#ffffff"
 BLUE = "#0969da"      # for receivers
@@ -13,62 +12,35 @@ GREY = "#b8bfc9"
 TEXT_COLOR = "#1c2230"
 LIGHT_TEXT = "#5a6474"
 
-# TODO maybe make these nicer later
-COLORS_LIST = [
-    "#0072B2", "#E69F00", "#56B4E9", "#D55E00",
-    "#CC79A7", "#009999", "#7B2D8B", "#F0E442",
-    "#3D5A80", "#CC8833", "#5B8DB8", "#E0A040",
-]
+#for time series(wong colors)
+COLORS_LIST = ["#0072B2", "#F0E442", "#56B4E9", "#D55E00","#CC79A7"]
 
 MALE_COLOR = "#0072B2"
 FEMALE_COLOR = "#CC79A7"
 
-# load data - make sure the parquet file is in the same folder
 df_all = pd.read_parquet("data_all_sexes.parquet", engine="fastparquet")
-
-# filter out region codes (codes above 900 are world regions not countries)
-df_all = df_all[(df_all["destination_code"] < 900) & (df_all["origin_code"] < 900)].copy()
-
-# clean up the asterisks from some country names
-df_all["destination"] = df_all["destination"].str.replace("*", "", regex=False)
-df_all["origin"] = df_all["origin"].str.replace("*", "", regex=False)
-# fix Turkey - dataset uses Türkiye (with ü) but Plotly only recognizes Turkey
-df_all["destination"] = df_all["destination"].str.replace("Türkiye", "Turkey", regex=False)
-df_all["origin"] = df_all["origin"].str.replace("Türkiye", "Turkey", regex=False)
-df_all["migrant_stock"] = pd.to_numeric(df_all["migrant_stock"], errors="coerce")
-df_all["year"] = df_all["year"].astype(int)
-
-# main dataframe is both sexes combined
 df = df_all[df_all["sex"] == "both_sexes"].copy()
 
 YEARS = sorted(df["year"].unique())
 COUNTRIES = sorted(df["destination"].dropna().unique())
-
 print("data loaded, years:", YEARS)
 print("number of countries:", len(COUNTRIES))
 
-# precompute aggregations so the callbacks are faster
+# precompute aggregations
 AGG_DEST = df.groupby(["destination", "year"], as_index=False)["migrant_stock"].sum().dropna()
 AGG_ORIG = df.groupby(["origin", "year"], as_index=False)["migrant_stock"].sum().dropna()
 
 FLOWS_INTO = df.groupby(["destination", "year", "origin"], as_index=False)["migrant_stock"].sum().dropna()
 FLOWS_FROM = df.groupby(["origin", "year", "destination"], as_index=False)["migrant_stock"].sum().dropna()
 
-# gender data (male/female split)
 gender_df = df_all[df_all["sex"].isin(["male", "female"])].dropna(subset=["migrant_stock"])
 GENDER_RECV = gender_df.groupby(["destination", "sex", "year"], as_index=False)["migrant_stock"].sum()
 GENDER_SENT = gender_df.groupby(["origin", "sex", "year"], as_index=False)["migrant_stock"].sum()
-
 GENDER_GLOBAL = GENDER_RECV.groupby(["sex", "year"], as_index=False)["migrant_stock"].sum()
+
 GLOBAL_TREND = AGG_DEST.groupby("year", as_index=False)["migrant_stock"].sum()
 
-# assign a color to each country for the time series chart
-COUNTRY_COLOR = {}
-for i, c in enumerate(COUNTRIES):
-    COUNTRY_COLOR[c] = COLORS_LIST[i % len(COLORS_LIST)]
-
-# country centroids for the map labels and the nearest-neighbour feature
-# these are approximate lat/lon positions
+#hardcoded countreis with latitude and longtitude for finding neighbors
 CENTROIDS = {
     "Afghanistan": (33.9, 67.7), "Albania": (41.2, 20.2),
     "Algeria": (28.0, 1.7), "Angola": (11.2, 17.9),
@@ -121,7 +93,7 @@ CENTROIDS = {
     "Zambia": (-13.1, 27.8), "Zimbabwe": (-19.0, 29.2),
 }
 
-# only show labels on big countries so the map doesnt get too cluttered
+#only show labels on big countries
 LARGE_COUNTRIES = {
     "United States of America", "Canada", "Brazil", "Argentina",
     "Russian Federation", "Australia", "China", "India",
@@ -131,11 +103,8 @@ LARGE_COUNTRIES = {
     "Venezuela (Bolivarian Republic of)", "Colombia",
     "Angola", "Mozambique", "Zambia",
 }
-
-
-# helper to shorten long country names for display
+# short long country names to fit
 def shorten(name):
-    # TODO: could use a dict instead of replace chain
     name = name.replace("United States of America", "USA")
     name = name.replace("United Kingdom", "UK")
     name = name.replace("Russian Federation", "Russia")
@@ -144,12 +113,9 @@ def shorten(name):
     name = name.replace("Iran (Islamic Republic of)", "Iran")
     name = name.replace("China, Hong Kong SAR", "Hong Kong")
     name = name.replace("Viet Nam", "Vietnam")
-    name = name.replace("Turkiye", "Turkey")
-    name = name.replace("Türkiye", "Turkey")
     return name
 
-
-# format big numbers nicely (e.g. 1500000 -> 1.5 M)
+#formatting big numbers with M, K
 def fmt_m(v):
     if v >= 1_000_000:
         return f"{v / 1_000_000:.1f} M"
@@ -161,7 +127,6 @@ def fmt_m(v):
 
 app = Dash(__name__, suppress_callback_exceptions=True)
 
-# custom CSS - mostly for the slider and dropdown styling
 app.index_string = """<!DOCTYPE html>
 <html>
 <head>
@@ -193,14 +158,11 @@ app.index_string = """<!DOCTYPE html>
   ::-webkit-scrollbar { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track { background: #f7f8fa; }
   ::-webkit-scrollbar-thumb { background: #dde1e7; border-radius: 2px; }
-  .rc-slider-handle {
-    border-color: #0969da !important;
-    background-color: #0969da !important;
-  }
-  .rc-slider-handle:hover, .rc-slider-handle-dragging {
-    border-color: #0969da !important;
-    box-shadow: 0 0 0 5px rgba(9,105,218,0.2) !important;
-  }
+  /* cannot change the color here */
+  .dash-slider-thumb {
+    --Dash-Fill-Interactive-Strong: #0969da !important;
+    --Dash-Fill-Inverse-Strong: #0969da !important;
+} 
 </style>
 {%scripts%}
 </head>
@@ -210,7 +172,7 @@ app.index_string = """<!DOCTYPE html>
 </body>
 </html>"""
 
-# reusable card style
+#reusable card style
 card_style = {
     "background": WHITE,
     "border": "1px solid #dde1e7",
@@ -237,7 +199,7 @@ app.layout = html.Div(style={
     dcc.Store(id="map-zoom", data=1.0),
     dcc.Store(id="map-mode", data="global"),
 
-    # header bar
+    #header
     html.Div(style={
         "background": WHITE,
         "borderBottom": "1px solid #dde1e7",
@@ -262,7 +224,7 @@ app.layout = html.Div(style={
         ]),
     ]),
 
-    # year slider
+    #year slider
     html.Div(style={
         "background": WHITE,
         "borderBottom": "1px solid #dde1e7",
@@ -289,10 +251,10 @@ app.layout = html.Div(style={
         "gap": "6px",
         "padding": "6px",
     }, children=[
-        # top row: map + bar charts
+        #top row,map and bars
         html.Div(style={"flex": "3", "display": "flex", "gap": "6px", "overflow": "hidden"}, children=[
 
-            # map panel
+            # map
             html.Div(style=dict(flex="3", **card_style), children=[
                 html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "6px"}, children=[
                     html.Div(id="map-label", style={
@@ -324,7 +286,7 @@ app.layout = html.Div(style={
                 ]),
             ]),
 
-            # right column: top receivers + top senders bars
+            # right column with top 5
             html.Div(style={"flex": "2", "display": "flex", "flexDirection": "column", "gap": "6px", "overflow": "hidden"}, children=[
                 html.Div(style=dict(flex="1", **card_style), children=[
                     html.Div(id="label-recv", style={
@@ -343,7 +305,7 @@ app.layout = html.Div(style={
             ]),
         ]),
 
-        # bottom row: gender chart + time series (hidden until a country is selected)
+        # bottom gender chart and time series
         html.Div(id="detail-panel", style={"display": "none"}, children=[
             html.Div(style=dict(flex="1", **card_style), children=[
                 html.Div(id="gender-title", style={
@@ -364,7 +326,7 @@ app.layout = html.Div(style={
 ])
 
 
-# -- CALLBACKS --
+#Callbacks
 
 @callback(
     Output("sel-country", "data"),
@@ -378,7 +340,7 @@ def update_selection(map_click, clear_n, current):
         return None
     if ctx.triggered_id == "choropleth" and map_click:
         clicked = map_click["points"][0].get("location")
-        # clicking same country again deselects it
+        # clicking same country you return to global
         if clicked == current:
             return None
         return clicked
@@ -390,8 +352,6 @@ def update_selection(map_click, clear_n, current):
     Input("sel-country", "data"),
 )
 def toggle_detail_panel(country):
-    # always show the bottom panels regardless of selection
-    # TODO: maybe hide when nothing is selected?
     return {"flex": "2", "display": "flex", "gap": "6px", "overflow": "hidden"}
 
 
@@ -404,7 +364,7 @@ def update_kpi(year, country):
     yr_dest = AGG_DEST[AGG_DEST["year"] == year]
     yr_orig = AGG_ORIG[AGG_ORIG["year"] == year]
 
-    # pill style helper - inline because its simple
+    #pill style helper 
     def make_pill(text, color):
         return html.Div(text, style={
             "background": BG_COLOR,
@@ -441,7 +401,6 @@ def update_kpi(year, country):
     Output("map-zoom", "data"),
     Input("choropleth", "relayoutData"),
     State("map-zoom", "data"),
-    prevent_initial_call=True,
 )
 def track_zoom(relayout, current_zoom):
     if relayout and "geo.projection.scale" in relayout:
@@ -464,7 +423,7 @@ def track_zoom(relayout, current_zoom):
 def update_map_controls(orig_n, dest_n, selected, current_mode):
     from dash import ctx
 
-    # button styles depending on which is active
+    # button styles
     def btn_style_origins(active):
         if active:
             return {"background": BLUE, "color": "#fff", "border": "none",
@@ -519,9 +478,8 @@ def update_map(year, selected, zoom_scale, map_mode):
     agg = AGG_DEST[AGG_DEST["year"] == year].copy()
     fig = go.Figure()
 
-    # colorbar settings
     log_ticks = [3, 4, 5, 6, 7]
-    log_text = ["1 K", "10 K", "100 K", "1 M", "10 M"]
+    log_text = ["1 K", "10 K", "100 K", "1 M", "10 M"] 
 
     def make_colorbar(title, tickvals, ticktext, x=1.0):
         return dict(
@@ -549,7 +507,7 @@ def update_map(year, selected, zoom_scale, map_mode):
             hovertemplate="<b>%{location}</b><br>%{customdata:,.0f}<extra></extra>",
         ))
 
-        # highlight selected country with a black border
+        #black border when country select
         if selected and selected in agg["destination"].values:
             sel_log = float(agg.loc[agg["destination"] == selected, "log_stock"].values[0])
             fig.add_trace(go.Choropleth(
@@ -562,7 +520,6 @@ def update_map(year, selected, zoom_scale, map_mode):
             ))
 
     elif map_mode == "origins":
-        # show where migrants come from to the selected country
         flows = FLOWS_INTO[
             (FLOWS_INTO["destination"] == selected) & (FLOWS_INTO["year"] == year)
         ][["origin", "migrant_stock"]].copy()
@@ -593,7 +550,6 @@ def update_map(year, selected, zoom_scale, map_mode):
         ))
 
     else:
-        # show where migrants from the selected country go to
         flows = FLOWS_FROM[
             (FLOWS_FROM["origin"] == selected) & (FLOWS_FROM["year"] == year)
         ][["destination", "migrant_stock"]].copy()
@@ -623,8 +579,7 @@ def update_map(year, selected, zoom_scale, map_mode):
             hovertemplate=f"<b>{shorten(selected)}</b><extra></extra>",
         ))
 
-    # add country name labels on the map
-    # only show labels for large countries to avoid clutter, or all if zoomed in
+    #zoom in->add country labels
     if (zoom_scale or 1.0) > 2.5:
         visible = set(CENTROIDS.keys())
     else:
@@ -645,11 +600,11 @@ def update_map(year, selected, zoom_scale, map_mode):
     ))
 
     fig.update_layout(
+        uirevision=f"{selected}-{map_mode}", #zoom remains when no changes
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=TEXT_COLOR, size=11),
         margin=dict(l=0, r=30, t=0, b=0),
-        uirevision=f"{selected or 'none'}-{map_mode}",
         geo=dict(
             showland=True, landcolor="#e8ecf0",
             showocean=True, oceancolor="#d6e8f7",
@@ -665,12 +620,10 @@ def update_map(year, selected, zoom_scale, map_mode):
 
 
 def build_bar_chart(data, bar_color):
-    """builds a horizontal bar chart for top 5 countries"""
     fig = go.Figure(go.Bar(
         y=data["short"],
         x=data["value"],
         orientation="h",
-        customdata=data["country"],
         marker=dict(color=bar_color, line=dict(width=0)),
         text=data["value"].apply(fmt_m),
         textposition="outside",
@@ -708,7 +661,6 @@ def build_bar_chart(data, bar_color):
 )
 def update_bar_recv(year, selected):
     if selected:
-        # show top origins for this country
         subset = FLOWS_INTO[
             (FLOWS_INTO["destination"] == selected) & (FLOWS_INTO["year"] == year)
         ][["origin", "migrant_stock"]].nlargest(5, "migrant_stock").rename(
@@ -763,7 +715,7 @@ def update_gender(year, selected):
         return float(row["migrant_stock"].values[0]) if not row.empty else 0.0
 
     if not selected:
-        # global gender split
+        #global gender
         yr_global = GENDER_GLOBAL[GENDER_GLOBAL["year"] == year]
         if yr_global.empty:
             return go.Figure(layout=go.Layout(paper_bgcolor="rgba(0,0,0,0)")), ""
@@ -781,7 +733,6 @@ def update_gender(year, selected):
             text=[f"{g_female / total * 100:.1f}%", f"{g_male / total * 100:.1f}%"],
             textposition="outside",
             textfont=dict(size=9, color=LIGHT_TEXT),
-            hovertemplate="%{y}: %{x:,.0f}<extra></extra>",
             showlegend=False,
         ))
         fig.update_layout(
@@ -806,7 +757,7 @@ def update_gender(year, selected):
         )
         return fig, f"Global Gender Breakdown  ·  {year}"
 
-    # country-level: show received vs sent by gender
+   #received vs sent by gender
     recv_yr = GENDER_RECV[(GENDER_RECV["destination"] == selected) & (GENDER_RECV["year"] == year)].copy()
     sent_yr = GENDER_SENT[(GENDER_SENT["origin"] == selected) & (GENDER_SENT["year"] == year)].copy()
 
@@ -874,7 +825,6 @@ def update_gender(year, selected):
 
 
 def get_nearest_countries(selected, n=4):
-    """returns n closest countries to selected based on lat/lon distance"""
     if selected not in CENTROIDS:
         return []
     lat1, lon1 = CENTROIDS[selected]
@@ -882,7 +832,7 @@ def get_nearest_countries(selected, n=4):
     for country, (lat2, lon2) in CENTROIDS.items():
         if country == selected:
             continue
-        dist = ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5
+        dist = ((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) ** 0.5 #pythagorio for distance
         distances.append((dist, country))
     distances.sort()
     return [c for _, c in distances[:n]]
@@ -902,7 +852,7 @@ def update_timeseries(year, selected):
         countries = [selected] + neighbours
         agg = AGG_DEST[AGG_DEST["destination"].isin(countries)].copy()
 
-        for country in countries:
+        for i, country in enumerate(countries):
             d = agg[agg["destination"] == country].sort_values("year")
             is_selected = country == selected
             fig.add_trace(go.Scatter(
@@ -910,12 +860,11 @@ def update_timeseries(year, selected):
                 name=shorten(country),
                 mode="lines+markers",
                 line=dict(
-                    color=BLUE if is_selected else COUNTRY_COLOR.get(country, GREY),
+                    color=BLUE if is_selected else COLORS_LIST[i % len(COLORS_LIST)],
                     width=3 if is_selected else 1.5,
                 ),
                 marker=dict(size=6 if is_selected else 3),
                 opacity=1.0 if is_selected else 0.55,
-                hovertemplate=f"{shorten(country)}: %{{y:,.0f}}<extra></extra>",
             ))
         label = f"Migration Trends  ·  {shorten(selected)}  vs. nearest neighbours"
 
@@ -926,11 +875,9 @@ def update_timeseries(year, selected):
             mode="lines+markers",
             line=dict(color=BLUE, width=2.5),
             marker=dict(size=4, color=BLUE),
-            hovertemplate="Global: %{y:,.0f}<extra></extra>",
         ))
         label = "Migration Trends  ·  Global Total  ·  1990–2024"
-
-    # add vertical line for the currently selected year
+    #vertical line to the selected year
     fig.add_vline(
         x=year,
         line_width=1,

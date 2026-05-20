@@ -32,6 +32,11 @@ for sex, start in SEX_START_COL.items():
 
 df = pd.concat(chunks, ignore_index=True)
 
+df["destination"] = df["destination"].str.replace("*", "", regex=False)
+df["origin"]      = df["origin"].str.replace("*", "", regex=False)
+df["destination"] = df["destination"].str.replace("Türkiye", "Turkey", regex=False)
+df["origin"]      = df["origin"].str.replace("Türkiye", "Turkey", regex=False)
+
 df = df[
     (df["destination_code"] < 900) &
     (df["origin_code"]      < 900)
